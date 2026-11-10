@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,11 +17,14 @@ import (
 // Production only ever constructs a tsnetNetwork, never an OS TCP listener.
 type network interface {
 	Listen(context.Context) (net.Listener, string, error)
+	ListenPort(context.Context, int) (net.Listener, string, error)
 	Close() error
 }
 
 type tsnetNetwork struct {
-	server *tsnet.Server
+	server         *tsnet.Server
+	getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	dnsName        string
 }
 
 func newTSNet(c config, hostname string, stderr io.Writer) *tsnetNetwork {
@@ -85,18 +89,27 @@ func (n *tsnetNetwork) Listen(ctx context.Context) (net.Listener, string, error)
 	}
 	// tsnet.ListenTLS calls Up(context.Background()) a second time. Binding the
 	// already-started node directly avoids an uncancellable second startup wait.
-	ln, err := listenTLS(ctx, n.server.Listen, getCertificate)
+	n.getCertificate, n.dnsName = getCertificate, id.DNSName
+	return n.ListenPort(ctx, 443)
+}
+
+func (n *tsnetNetwork) ListenPort(ctx context.Context, port int) (net.Listener, string, error) {
+	ln, err := listenTLS(ctx, port, n.server.Listen, n.getCertificate)
 	if err != nil {
 		return nil, "", err
 	}
-	return ln, "https://" + id.DNSName, nil
+	base := "https://" + n.dnsName
+	if port != 443 {
+		base += ":" + strconv.Itoa(port)
+	}
+	return ln, base, nil
 }
 
-func listenTLS(ctx context.Context, listen func(string, string) (net.Listener, error), getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (net.Listener, error) {
+func listenTLS(ctx context.Context, port int, listen func(string, string) (net.Listener, error), getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)) (net.Listener, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ln, err := listen("tcp", ":443")
+	ln, err := listen("tcp", ":"+strconv.Itoa(port))
 	if err != nil {
 		return nil, err
 	}

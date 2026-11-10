@@ -55,12 +55,21 @@ func runDaemon(ctx context.Context, c config, node network, stderr io.Writer) er
 		return err
 	}
 	logger := log.New(stderr, "tspreview: ", log.LstdFlags)
+	proxies, err := newProxyManager(c, node, logger)
+	if err != nil {
+		return err
+	}
+	defer proxies.close()
 	publicServer := &http.Server{
 		Handler: store.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: time.Minute, ErrorLog: logger,
 	}
+	controlMux := http.NewServeMux()
+	controlMux.Handle("/", controlHandler(store, baseURL, cancel))
+	controlMux.HandleFunc("GET /proxies", func(w http.ResponseWriter, r *http.Request) { proxies.serveControl(ctx, w, r) })
+	controlMux.HandleFunc("POST /proxies", func(w http.ResponseWriter, r *http.Request) { proxies.serveControl(ctx, w, r) })
 	controlServer := &http.Server{
-		Handler: controlHandler(store, baseURL, cancel), ReadHeaderTimeout: 5 * time.Second,
+		Handler: controlMux, ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout: time.Minute, ErrorLog: logger,
 	}
 	serverErrors := make(chan error, 2)
@@ -85,6 +94,8 @@ running:
 			}
 		}
 	}
+	cancel()
+	proxies.close()
 	shutdown, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := controlServer.Shutdown(shutdown); err != nil {
