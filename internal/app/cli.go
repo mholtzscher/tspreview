@@ -21,6 +21,8 @@ const usage = `tspreview — disposable HTTPS previews on your tailnet
 Usage:
   tspreview login [--hostname NAME]  Authenticate once; provision HTTPS
   tspreview <file-or-directory>     Publish a snapshot and print its URL
+  tspreview proxy <upstream-url>    Proxy a local app while this command runs
+  tspreview proxies                List active app proxies (starts server)
   tspreview list                   List unexpired previews (starts server)
   tspreview rm <id>                Delete a preview
   tspreview stop                   Stop the server; keep unexpired snapshots
@@ -81,9 +83,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, err := io.WriteString(stdout, usage)
 		return err
 	}
+	if args[0] == "proxy" {
+		return runProxy(ctx, args[1:], stdout, stderr)
+	}
 	command := "publish"
 	switch args[0] {
-	case "login", "list", "rm", "stop", "publish", "__daemon":
+	case "login", "list", "rm", "stop", "publish", "proxies", "__daemon":
 		command, args = args[0], args[1:]
 	}
 	fs := flag.NewFlagSet("tspreview", flag.ContinueOnError)
@@ -167,6 +172,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	switch command {
+	case "proxies":
+		var items []proxyRegistration
+		if err := client.request(ctx, http.MethodGet, "/proxies", nil, &items); err != nil {
+			return err
+		}
+		if jsonOutput {
+			return json.NewEncoder(stdout).Encode(items)
+		}
+		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "NAME\tWORKTREE\tUPSTREAM\tURL")
+		for _, p := range items {
+			fmt.Fprintf(tw, "%q\t%q\t%s\t%s\n", p.Name, p.Worktree, p.Upstream, p.URL)
+		}
+		return tw.Flush()
 	case "publish":
 		var p publication
 		if err := client.request(ctx, http.MethodPost, "/previews", publishRequest{Path: source, TTL: ttl}, &p); err != nil {

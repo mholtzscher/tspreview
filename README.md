@@ -1,8 +1,8 @@
 # tspreview
 
-Share disposable HTML files and static directories over your Tailscale network.
-Built for agents working on remote machines: publish a file, get an HTTPS URL,
-and let it expire. Embeds its own [tsnet](https://tailscale.com/kb/1244/tsnet) node,
+Share static snapshots and running local apps over your Tailscale network.
+Built for agents working on remote machines: publish a file or proxy a dev server
+and get an HTTPS URL. Embeds its own [tsnet](https://tailscale.com/kb/1244/tsnet) node,
 so no sudo, host Serve configuration, or separate Tailscale installation is needed.
 
 ![Terminal demo: publish files, set a TTL, list previews, and remove a preview](docs/demo.gif)
@@ -55,6 +55,23 @@ returns immediately. Multiple agents can publish concurrently. `list` and `rm`
 also auto-start the server. It survives the invoking shell, but is not supervised
 or started at boot. It keeps running even when all previews expire.
 
+## Proxy running apps
+
+```sh
+tspreview proxy http://127.0.0.1:3000      # Stay foreground; Ctrl-C removes the proxy
+tspreview proxies                        # List active app proxies
+```
+
+Each worktree/app gets a saved HTTPS port on the same Tailscale device, so apps
+keep their root URLs without path prefixes. Mise owns app processes and local
+ports; tspreview forwards HTTP, streaming responses, and WebSockets. Allow tailnet
+TCP ports **10000–59999**. Proxies have no TTL and stop when their foreground
+command exits. Existing snapshots remain on 443.
+
+Use `--name` for multiple apps in one worktree. See the [proxy guide](docs/proxy.md)
+for Mise/Hearth configuration, extra routes, and limitations. After upgrading an
+already-running server, run `tspreview stop` once to load the new version.
+
 ## Behavior and limits
 
 - Snapshots expire after **24 hours** by default; change this with `--ttl`.
@@ -69,8 +86,9 @@ or started at boot. It keeps running even when all previews expire.
 ## Safety and configuration
 
 Tailnet access rules protect the node; preview IDs are not authentication.
-All previews share a browser origin. Use it for trusted prototypes, not hostile
-HTML or multi-user isolation. Check published directories for secrets.
+Static previews share a browser origin. App proxy ports have distinct origins,
+but cookies are not isolated by port. Use trusted prototypes and apps, not hostile
+content or multi-user isolation. Check published directories for secrets.
 
 State and logs live in `$XDG_STATE_HOME/tspreview` or
 `~/.local/state/tspreview`. Never publish this directory. Use `--state-dir` to

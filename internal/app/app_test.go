@@ -36,6 +36,9 @@ func (loopbackNetwork) Listen(context.Context) (net.Listener, string, error) {
 	return ln, "http://" + ln.Addr().String(), nil
 }
 func (loopbackNetwork) Close() error { return nil }
+func (n loopbackNetwork) ListenPort(ctx context.Context, _ int) (net.Listener, string, error) {
+	return n.Listen(ctx)
+}
 
 func testConfig(t *testing.T) config {
 	t.Helper()
@@ -285,6 +288,15 @@ func TestDaemonHelperProcess(t *testing.T) {
 	args := os.Args[index+1:]
 	if len(args) > 0 && args[0] == "__fail" {
 		os.Exit(3)
+	}
+	if len(args) == 4 && args[0] == "__proxy" {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		if err := Run(ctx, []string{"proxy", args[3], "--state-dir", args[1], "--worktree", args[2], "--json"}, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		os.Exit(0)
 	}
 	if len(args) == 3 && args[0] == "__publish" {
 		c := config{StateDir: args[1], Timeout: 10 * time.Second}

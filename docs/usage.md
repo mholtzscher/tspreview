@@ -37,6 +37,10 @@ Retries create new publications; they are not exactly-once operations.
 
 ## Server, state, and logs
 
+For live apps, see the [proxy guide](proxy.md). `tspreview proxy` stays foreground
+and leases an additional HTTPS listener from this shared server. `tspreview
+proxies` lists active app registrations; `list` continues to list snapshots only.
+
 One detached process owns the tsnet HTTPS listener and preview registry. CLI
 commands control it through a private Unix socket, not a network-accessible
 management API. A supervisor, container, or agent sandbox that kills descendant
@@ -45,6 +49,7 @@ processes can still stop the server.
 Default state is `$XDG_STATE_HOME/tspreview` or `~/.local/state/tspreview`:
 
 - `node/` holds node credentials; `previews/` holds snapshots.
+- `proxy-ports.json` retains worktree/app port assignments, not live registrations.
 - `daemon.log` records server output. These paths are private to the OS user.
 - `--verbose` enables tsnet diagnostics when starting the server. Stop an existing
   server first if you need to change its logging level.
@@ -69,6 +74,8 @@ copies roughly once a minute. When stopped, cleanup waits until the next start.
 Downloaded or browser-cached copies cannot be revoked.
 
 `tspreview stop` disconnects the node but preserves login and unexpired snapshots.
+It also ends every active proxy lease. Restart foreground proxy commands after
+starting the server again; their saved HTTPS port assignments are retained.
 To uninstall completely, stop the server with its original `--state-dir`, remove
 that state directory and the executable, and remove its registered device from
 the Tailscale admin console.
@@ -79,3 +86,6 @@ The automated tests cover snapshots, expiry, path containment, concurrent caller
 detached processes, cancellation, TLS wrapping, and restart. Their network
 adapters bind loopback only in test code. Real Tailscale authentication,
 certificate issuance, and access from another tailnet peer require a live check.
+Proxy tests also cover HTTP/TLS forwarding, WebSockets and their cleanup,
+streaming, concurrent worktrees, port collisions, restart stability, and lease
+release after graceful exit or process death.
