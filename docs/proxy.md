@@ -1,5 +1,7 @@
 # Proxy running apps
 
+[CLI recording and verification scope](proxy-demo.md).
+
 Run `tspreview login` once, then start a proxy beside your development app:
 
 ```sh
@@ -31,6 +33,7 @@ tspreview assigns **tailnet HTTPS ports** on one shared tsnet device:
   identity. Run from the same root outside Git, or select it explicitly.
 - Each identity retains a port in **10000–59999**, including across upstream port
   changes and server restarts. Colliding candidates get another unused saved port.
+  Port 10080 is excluded because browsers block it.
 - `--name api` adds an independently managed app within the same worktree.
 - A second live registration for the same identity fails. Stop the old foreground
   process before replacing its upstream or extra routes.
@@ -103,6 +106,7 @@ Upstreams must be HTTP/HTTPS origins on `localhost` or a loopback IP, without
 credentials, paths, queries, or fragments. Use `http://` even for a plain WebSocket
 server; upgrades become `wss://` on the public HTTPS endpoint. HTTPS upstreams
 require a certificate trusted by the host. No insecure TLS bypass is provided.
+`localhost` connects directly to IPv4 or IPv6 loopback, without DNS resolution.
 
 The proxy preserves methods, bodies, escaped paths, query strings, streaming,
 and WebSocket upgrades. It replaces incoming forwarding headers with
@@ -138,3 +142,7 @@ and the NATS route exposes the broker's browser interface to permitted peers.
 Only expose services you intend those peers to use. Different ports are separate
 browser origins, but cookies ignore ports and sibling origins are not a security
 sandbox. Use trusted apps; avoid sensitive cookies scoped to the shared hostname.
+
+If `proxy-ports.json` is invalid, proxy commands fail with an explicit error while
+snapshots remain available. Repair the file and restart the shared server to
+restore proxies. Deleting it discards the stable URL assignments.
