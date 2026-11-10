@@ -93,7 +93,7 @@ func newProxyManager(c config, node network, logger *log.Logger) (*proxyManager,
 	}
 	used := map[int]bool{}
 	for id, port := range m.assignments {
-		if !proxyIDPattern.MatchString(id) || port < proxyPortMin || port >= proxyPortMin+proxyPortCount || used[port] {
+		if !proxyIDPattern.MatchString(id) || port < proxyPortMin || port >= proxyPortMin+proxyPortCount || port == 10080 || used[port] {
 			return nil, fmt.Errorf("invalid or duplicate proxy port assignment")
 		}
 		used[port] = true
@@ -120,12 +120,14 @@ func (m *proxyManager) register(ctx context.Context, req proxyRequest) (*activeP
 	}
 	port, saved := m.assignments[id]
 	if !saved {
-		used := map[int]bool{}
+		// Fetch blocks 10080 in browsers; other blocked ports are below our range.
+		// https://fetch.spec.whatwg.org/#port-blocking
+		used := map[int]bool{10080: true}
 		for _, assigned := range m.assignments {
 			used[assigned] = true
 		}
 		hash := sha256.Sum256([]byte(id))
-		candidate := int(binary.BigEndian.Uint32(hash[:4])) % proxyPortCount
+		candidate := int(binary.BigEndian.Uint32(hash[:4]) % proxyPortCount)
 		for offset := range proxyPortCount {
 			p := proxyPortMin + (candidate+offset)%proxyPortCount
 			if !used[p] {

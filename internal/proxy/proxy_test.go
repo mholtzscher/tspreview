@@ -40,6 +40,7 @@ func TestForwardingAndLongestRoute(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for _, tc := range []struct{ path, want string }{
 		{"/assets/a%2Fb.js?x=1&x=2", "web POST /assets/a%2Fb.js?x=1&x=2 payload preview.test:12345"},
+		{"/search?filter=a;b&other=1", "web POST /search?filter=a;b&other=1 payload preview.test:12345"},
 		{"/nats", "nats POST / payload preview.test:12345"},
 		{"/nats/events?x=1", "nats POST /events?x=1 payload preview.test:12345"},
 		{"/%6eats/a%2Fb?x=1", "nats POST /a%2Fb?x=1 payload preview.test:12345"},
@@ -215,5 +216,41 @@ func TestUnavailableUpstreamRecoversWithoutProxyRestart(t *testing.T) {
 	body, err := io.ReadAll(res.Body)
 	if err != nil || res.StatusCode != 200 || string(body) != "recovered" {
 		t.Fatalf("recovery = %d %q, %v", res.StatusCode, body, err)
+	}
+}
+
+func TestLocalhostCanReachEitherLoopbackFamily(t *testing.T) {
+	for _, tc := range []struct{ network, address string }{{"tcp4", "127.0.0.1:0"}, {"tcp6", "[::1]:0"}} {
+		t.Run(tc.network, func(t *testing.T) {
+			listener, err := net.Listen(tc.network, tc.address)
+			if err != nil && tc.network == "tcp6" {
+				t.Skip("IPv6 loopback unavailable")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, port, _ := net.SplitHostPort(listener.Addr().String())
+			upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, tc.network) }))
+			upstream.Listener.Close()
+			upstream.Listener = listener
+			upstream.Start()
+			defer upstream.Close()
+			h, err := New("http://localhost:"+port, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer h.Close()
+			server := httptest.NewServer(h)
+			defer server.Close()
+			res, err := (&http.Client{Timeout: 5 * time.Second}).Get(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			body, err := io.ReadAll(res.Body)
+			if err != nil || res.StatusCode != 200 || string(body) != tc.network {
+				t.Fatalf("localhost: %d %q %v", res.StatusCode, body, err)
+			}
+		})
 	}
 }

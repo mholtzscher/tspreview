@@ -2,6 +2,7 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -39,10 +40,9 @@ func New(upstream string, routes []Route, logger *log.Logger) (*Handler, error) 
 		logger = log.Default()
 	}
 	h := &Handler{transport: &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Second,
-		IdleConnTimeout:       time.Minute,
+		DialContext:         dialLoopback,
+		TLSHandshakeTimeout: 10 * time.Second,
+		IdleConnTimeout:     time.Minute,
 	}}
 	seen := map[string]bool{}
 	all := append(slices.Clone(routes), Route{Upstream: upstream})
@@ -76,6 +76,9 @@ func New(upstream string, routes []Route, logger *log.Logger) (*Handler, error) 
 					}
 				}
 				r.SetURL(target)
+				// Routing never interprets query parameters. Preserve them verbatim
+				// rather than using Rewrite's default query sanitization.
+				r.Out.URL.RawQuery = r.In.URL.RawQuery
 				r.SetXForwarded()
 			},
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -86,6 +89,23 @@ func New(upstream string, routes []Route, logger *log.Logger) (*Handler, error) 
 	}
 	slices.SortFunc(h.routes, func(a, b routeHandler) int { return len(b.prefix) - len(a.prefix) })
 	return h, nil
+}
+
+func dialLoopback(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	if host != "localhost" {
+		return dialer.DialContext(ctx, network, address)
+	}
+	// Do not let resolver or hosts-file changes move localhost off loopback.
+	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort("127.0.0.1", port))
+	if err == nil {
+		return conn, nil
+	}
+	return dialer.DialContext(ctx, network, net.JoinHostPort("::1", port))
 }
 
 func parseOrigin(raw string) (*url.URL, error) {

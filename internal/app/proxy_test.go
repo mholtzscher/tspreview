@@ -397,6 +397,7 @@ func TestProxyPortStateValidation(t *testing.T) {
 	for _, content := range []string{
 		"invalid JSON", "null", `{"not-an-id":12345}`,
 		fmt.Sprintf(`{%q:443}`, strings.Repeat("a", 64)),
+		fmt.Sprintf(`{%q:10080}`, strings.Repeat("a", 64)),
 		fmt.Sprintf(`{%q:12345,%q:12345}`, strings.Repeat("a", 64), strings.Repeat("b", 64)),
 	} {
 		c := testConfig(t)
@@ -406,5 +407,43 @@ func TestProxyPortStateValidation(t *testing.T) {
 		if _, err := newProxyManager(c, loopbackNetwork{}, log.Default()); err == nil {
 			t.Errorf("accepted invalid port state %q", content)
 		}
+	}
+}
+
+func TestCorruptProxyAssignmentsDoNotDisableSnapshots(t *testing.T) {
+	c := testConfig(t)
+	if err := os.WriteFile(filepath.Join(c.StateDir, "proxy-ports.json"), []byte("invalid JSON"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	startTestDaemon(t, c)
+	file := filepath.Join(t.TempDir(), "available.html")
+	if err := os.WriteFile(file, []byte("snapshot remains available"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var p publication
+	if err := json.Unmarshal([]byte(cli(t, c, file, "--json")), &p); err != nil {
+		t.Fatal(err)
+	}
+	fetch(t, p.URL, 200, "snapshot remains available")
+	err := newControlClient(c).request(context.Background(), http.MethodGet, "/proxies", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "app proxies unavailable") {
+		t.Fatalf("proxy state error was hidden: %v", err)
+	}
+}
+
+func TestProxySkipsBrowserBlockedPort(t *testing.T) {
+	c := testConfig(t)
+	m, err := newProxyManager(c, loopbackNetwork{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	// This fixture hashes to 10080, which browsers block for HTTP and HTTPS.
+	p, err := m.register(context.Background(), proxyRequest{Worktree: "/fixture/worktree-33117", Name: "web", Upstream: "http://127.0.0.1:1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.registration.Port != 10081 {
+		t.Fatalf("allocated %d, want 10081 after the blocked port", p.registration.Port)
 	}
 }

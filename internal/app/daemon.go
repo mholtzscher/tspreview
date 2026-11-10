@@ -55,19 +55,27 @@ func runDaemon(ctx context.Context, c config, node network, stderr io.Writer) er
 		return err
 	}
 	logger := log.New(stderr, "tspreview: ", log.LstdFlags)
-	proxies, err := newProxyManager(c, node, logger)
-	if err != nil {
-		return err
+	proxies, proxyErr := newProxyManager(c, node, logger)
+	if proxyErr != nil {
+		logger.Printf("app proxies unavailable: %v", proxyErr)
+	} else {
+		defer proxies.close()
 	}
-	defer proxies.close()
 	publicServer := &http.Server{
 		Handler: store.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout: time.Minute, ErrorLog: logger,
 	}
 	controlMux := http.NewServeMux()
 	controlMux.Handle("/", controlHandler(store, baseURL, cancel))
-	controlMux.HandleFunc("GET /proxies", func(w http.ResponseWriter, r *http.Request) { proxies.serveControl(ctx, w, r) })
-	controlMux.HandleFunc("POST /proxies", func(w http.ResponseWriter, r *http.Request) { proxies.serveControl(ctx, w, r) })
+	proxyControl := func(w http.ResponseWriter, r *http.Request) {
+		if proxyErr != nil {
+			writeError(w, http.StatusServiceUnavailable, fmt.Errorf("app proxies unavailable: %w; repair proxy-ports.json and restart the server", proxyErr))
+			return
+		}
+		proxies.serveControl(ctx, w, r)
+	}
+	controlMux.HandleFunc("GET /proxies", proxyControl)
+	controlMux.HandleFunc("POST /proxies", proxyControl)
 	controlServer := &http.Server{
 		Handler: controlMux, ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout: time.Minute, ErrorLog: logger,
@@ -95,7 +103,9 @@ running:
 		}
 	}
 	cancel()
-	proxies.close()
+	if proxies != nil {
+		proxies.close()
+	}
 	shutdown, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := controlServer.Shutdown(shutdown); err != nil {
